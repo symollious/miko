@@ -39,3 +39,4 @@ frames_cache/
 # Test scripts
 split_test*.py
 patch_css*.py
+.vercel
