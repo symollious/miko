@@ -16,6 +16,9 @@ const MOUTH_SIZE = { width: 140, height: 72 };
 const MOUTH_ANCHOR = { x: 740, y: 845 };
 const LIP_SYNC_LOOKAHEAD_SECONDS = 0.015;
 
+const POCKET_TTS_WORKER_URL = 'https://kevinahm-pocket-tts-web.static.hf.space/inference-worker.js';
+const POCKET_TTS_VOICE = 'eponine';
+
 function getContainedVideoRect(panelRect) {
   const panelAspect = panelRect.width / panelRect.height;
   const videoAspect = VIDEO_SIZE.width / VIDEO_SIZE.height;
@@ -112,7 +115,11 @@ function clamp01(value) {
 export default function HomePage() {
   const idleVideoRef = useRef(null);
   const videoPanelRef = useRef(null);
-  const mouthCoverRef = useRef(null);
+  const isSpeakingRef = useRef(false);
+
+  const pocketWorkerRef = useRef(null);
+  const pocketReadyRef = useRef(false);
+  const pocketSampleRateRef = useRef(24000);
   const mouthARef = useRef(null);
   const mouthBRef = useRef(null);
   const audioContextRef = useRef(null);
@@ -148,6 +155,128 @@ export default function HomePage() {
     idle.playsInline = true;
     idle.play().catch(() => {});
   }, []);
+
+  const ensurePocketTtsReady = useCallback(async () => {
+    if (pocketReadyRef.current) return;
+    if (pocketWorkerRef.current) {
+      await new Promise((resolve) => {
+        const check = () => {
+          if (pocketReadyRef.current) resolve();
+          else setTimeout(check, 50);
+        };
+        check();
+      });
+      return;
+    }
+
+    const worker = new Worker(POCKET_TTS_WORKER_URL, { type: 'module' });
+    pocketWorkerRef.current = worker;
+
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Pocket-TTS load timeout')), 180000);
+      worker.onmessage = (e) => {
+        const msg = e.data;
+        if (msg?.type === 'bundle_loaded') {
+          if (typeof msg.sampleRate === 'number') pocketSampleRateRef.current = msg.sampleRate;
+        }
+        if (msg?.type === 'loaded' || msg?.type === 'voices_loaded') {
+          pocketReadyRef.current = true;
+          clearTimeout(timeout);
+          try {
+            worker.postMessage({ type: 'set_voice', data: { voiceName: POCKET_TTS_VOICE } });
+          } catch {}
+          resolve();
+        }
+        if (msg?.type === 'error') {
+          clearTimeout(timeout);
+          reject(new Error(String(msg.error || 'Pocket-TTS worker error')));
+        }
+      };
+      worker.postMessage({ type: 'load' });
+    });
+  }, []);
+
+  const float32ToWavBlob = useCallback((samples, sampleRate) => {
+    const numChannels = 1;
+    const bitsPerSample = 16;
+    const blockAlign = (numChannels * bitsPerSample) / 8;
+    const byteRate = sampleRate * blockAlign;
+    const dataSize = samples.length * 2;
+    const buffer = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(buffer);
+
+    const writeString = (offset, str) => {
+      for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+    };
+
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + dataSize, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, bitsPerSample, true);
+    writeString(36, 'data');
+    view.setUint32(40, dataSize, true);
+
+    let offset = 44;
+    for (let i = 0; i < samples.length; i++) {
+      const s = Math.max(-1, Math.min(1, samples[i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      offset += 2;
+    }
+
+    return new Blob([buffer], { type: 'audio/wav' });
+  }, []);
+
+  const generatePocketTtsWavUrl = useCallback(async (text) => {
+    await ensurePocketTtsReady();
+    const worker = pocketWorkerRef.current;
+    const sampleRate = pocketSampleRateRef.current;
+
+    const chunks = [];
+
+    await new Promise((resolve, reject) => {
+      const onMessage = (e) => {
+        const msg = e.data;
+        if (!msg) return;
+
+        if (msg.type === 'audio_chunk' && msg.data) {
+          chunks.push(new Float32Array(msg.data));
+        }
+
+        if (msg.type === 'stream_ended') {
+          worker.removeEventListener('message', onMessage);
+          resolve();
+        }
+
+        if (msg.type === 'error') {
+          worker.removeEventListener('message', onMessage);
+          reject(new Error(String(msg.error || 'Pocket-TTS generate error')));
+        }
+      };
+
+      worker.addEventListener('message', onMessage);
+      worker.postMessage({ type: 'generate', data: { text, voice: POCKET_TTS_VOICE } });
+    });
+
+    const total = chunks.reduce((n, c) => n + c.length, 0);
+    const merged = new Float32Array(total);
+    let cursor = 0;
+    for (const c of chunks) {
+      merged.set(c, cursor);
+      cursor += c.length;
+    }
+
+    const blob = float32ToWavBlob(merged, sampleRate);
+    const url = URL.createObjectURL(blob);
+    const duration = merged.length / sampleRate;
+    return { url, duration };
+  }, [ensurePocketTtsReady, float32ToWavBlob]);
 
   useEffect(() => {
     MOUTH_SPRITES.forEach((src) => {
@@ -423,6 +552,22 @@ export default function HomePage() {
 
               if (data.audio_url) {
                 setAudioQueue(prev => [...prev, data]);
+              } else if (data.text_chunk) {
+                (async () => {
+                  try {
+                    const { url, duration } = await generatePocketTtsWavUrl(data.text_chunk);
+                    setAudioQueue((prev) => [
+                      ...prev,
+                      {
+                        ...data,
+                        audio_url: url,
+                        duration,
+                      },
+                    ]);
+                  } catch (err) {
+                    console.error('Pocket-TTS error:', err);
+                  }
+                })();
               }
             } catch(e) {
               console.error("NDJSON Parse error", e);

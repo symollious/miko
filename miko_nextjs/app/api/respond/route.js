@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server.js';
 export const runtime = 'nodejs';
 
 const PYTHON_BACKEND = process.env.PYTHON_BACKEND_URL || 'http://127.0.0.1:8002';
+const CLIENT_TTS = process.env.CLIENT_TTS === '1';
 
 export async function POST(req) {
   let body;
@@ -20,7 +21,11 @@ export async function POST(req) {
     const res = await fetch(`${PYTHON_BACKEND}/respond`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ text: body.text, history: body.history || [] }),
+      body: JSON.stringify({
+        text: body.text,
+        history: body.history || [],
+        skip_tts: CLIENT_TTS,
+      }),
     });
 
     if (!res.ok) {

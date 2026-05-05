@@ -113,6 +113,7 @@ LABIALS = {"b", "m", "p"}
 
 class RespondIn(BaseModel):
     text: str
+    skip_tts: bool = False
     history: list[dict[str, Any]] = []
 
 
@@ -583,24 +584,45 @@ Your name is Miko. Stay consistent with this personality in all responses.
                     if is_first:
                         t_first_llm = time.time()
                     
-                    t_tts_start = time.time()
-                    audio_path, duration, word_boundaries, speech_segments = await _generate_tts(sentence)
-                    t_tts_end = time.time()
-                    
-                    visemes = _build_viseme_schedule(sentence, word_boundaries, duration, speech_segments)
-                    
-                    yield json.dumps({
-                        "text_chunk": sentence,
-                        "audio_url": "/generated/" + os.path.basename(audio_path),
-                        "duration": round(duration, 2),
-                        "visemes": visemes,
-                        "speech_segments": speech_segments,
-                        "timings": {
-                            "llm_chunk_ms": int((t_first_llm - t0) * 1000) if is_first else 0,
-                            "tts_ms": int((t_tts_end - t_tts_start) * 1000),
-                            "total_ms": int((time.time() - t0) * 1000),
+                    ai_text = chunk.choices[0].message.content
+                    t1 = time.time()
+
+                    if inp.skip_tts:
+                        duration = max(0.6, len(ai_text.split()) / 2.4)
+                        t2 = time.time()
+                        visemes = _build_viseme_schedule(ai_text, [], duration)
+                        timings = {
+                            "llm_ms": int((t1 - t0) * 1000),
+                            "tts_ms": 0,
+                            "total_ms": int((t2 - t0) * 1000),
                         }
-                    }) + "\n"
+
+                        yield json.dumps({
+                            "text_chunk": ai_text,
+                            "audio_url": None,
+                            "duration": round(duration, 2),
+                            "visemes": visemes,
+                            "timings": timings,
+                        }) + "\n"
+                    else:
+                        t_tts_start = time.time()
+                        audio_path, duration, word_boundaries, speech_segments = await _generate_tts(ai_text)
+                        t_tts_end = time.time()
+                        
+                        visemes = _build_viseme_schedule(ai_text, word_boundaries, duration, speech_segments)
+                        
+                        yield json.dumps({
+                            "text_chunk": sentence,
+                            "audio_url": "/generated/" + os.path.basename(audio_path),
+                            "duration": round(duration, 2),
+                            "visemes": visemes,
+                            "speech_segments": speech_segments,
+                            "timings": {
+                                "llm_chunk_ms": int((t_first_llm - t0) * 1000) if is_first else 0,
+                                "tts_ms": int((t_tts_end - t_tts_start) * 1000),
+                                "total_ms": int((time.time() - t0) * 1000),
+                            }
+                        }) + "\n"
                     is_first = False
 
         if buffer.strip():
@@ -608,24 +630,43 @@ Your name is Miko. Stay consistent with this personality in all responses.
             if is_first:
                 t_first_llm = time.time()
             
-            t_tts_start = time.time()
-            audio_path, duration, word_boundaries, speech_segments = await _generate_tts(sentence)
-            t_tts_end = time.time()
-            
-            visemes = _build_viseme_schedule(sentence, word_boundaries, duration, speech_segments)
-            
-            yield json.dumps({
-                "text_chunk": sentence,
-                "audio_url": "/generated/" + os.path.basename(audio_path),
-                "duration": round(duration, 2),
-                "visemes": visemes,
-                "speech_segments": speech_segments,
-                "timings": {
-                    "llm_chunk_ms": int((t_first_llm - t0) * 1000) if is_first else 0,
-                    "tts_ms": int((t_tts_end - t_tts_start) * 1000),
-                    "total_ms": int((time.time() - t0) * 1000),
-                }
-            }) + "\n"
+            ai_text = resp.choices[0].message.content
+            t1 = time.time()
+
+            if inp.skip_tts:
+                duration = max(0.6, len(ai_text.split()) / 2.4)
+                t2 = time.time()
+                visemes = _build_viseme_schedule(ai_text, [], duration)
+                yield json.dumps({
+                    "text_chunk": sentence,
+                    "audio_url": None,
+                    "duration": round(duration, 2),
+                    "visemes": visemes,
+                    "timings": {
+                        "llm_chunk_ms": int((t_first_llm - t0) * 1000) if is_first else 0,
+                        "tts_ms": 0,
+                        "total_ms": int((t2 - t0) * 1000),
+                    },
+                }) + "\n"
+            else:
+                t_tts_start = time.time()
+                audio_path, duration, word_boundaries, speech_segments = await _generate_tts(ai_text)
+                t_tts_end = time.time()
+
+                visemes = _build_viseme_schedule(ai_text, word_boundaries, duration, speech_segments)
+
+                yield json.dumps({
+                    "text_chunk": sentence,
+                    "audio_url": "/generated/" + os.path.basename(audio_path),
+                    "duration": round(duration, 2),
+                    "visemes": visemes,
+                    "speech_segments": speech_segments,
+                    "timings": {
+                        "llm_chunk_ms": int((t_first_llm - t0) * 1000) if is_first else 0,
+                        "tts_ms": int((t_tts_end - t_tts_start) * 1000),
+                        "total_ms": int((time.time() - t0) * 1000),
+                    },
+                }) + "\n"
 
     return StreamingResponse(generate_response_stream(), media_type="application/x-ndjson")
 
