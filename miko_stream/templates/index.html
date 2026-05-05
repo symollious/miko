@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Miko - Real-Time AI</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #fbf6ea;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            color: #1f2937;
+        }
+
+        /* LEFT: 70% - Fullscreen Video */
+        .video-panel {
+            width: 70%;
+            height: 100vh;
+            position: relative;
+            background: #f4ead7;
+            overflow: hidden;
+        }
+
+        #mikoVideo {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        #idleVideo {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        .video-layer {
+            position: absolute;
+            inset: 0;
+            transition: opacity 220ms ease;
+            opacity: 0;
+        }
+
+        .video-layer.is-visible {
+            opacity: 1;
+        }
+
+        .idle-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: radial-gradient(ellipse at center, rgba(251,246,234,0.75) 0%, rgba(244,234,215,0.9) 70%);
+            pointer-events: none;
+        }
+
+        .idle-overlay .robot {
+            font-size: 8rem;
+            animation: float 3s ease-in-out infinite;
+        }
+
+        .idle-overlay .label {
+            font-size: 1.2rem;
+            color: rgba(31,41,55,0.65);
+            margin-top: 20px;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-15px); }
+        }
+
+        .latency-badge {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            background: rgba(255,255,255,0.65);
+            backdrop-filter: blur(10px);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-family: 'SF Mono', monospace;
+            border: 1px solid rgba(31, 41, 55, 0.12);
+            z-index: 10;
+        }
+
+        .latency-badge .val {
+            color: #1f2937;
+            font-weight: bold;
+        }
+
+        .status-badge {
+            position: absolute;
+            bottom: 15px;
+            left: 15px;
+            background: rgba(255,255,255,0.65);
+            backdrop-filter: blur(10px);
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            z-index: 10;
+            border: 1px solid rgba(31, 41, 55, 0.12);
+        }
+
+        .status-badge.connected { color: #0f766e; }
+        .status-badge.processing { color: #b45309; }
+
+        /* RIGHT: 30% - Chat Panel */
+        .chat-panel {
+            width: 30%;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background: linear-gradient(180deg, #fffaf0 0%, #fbf6ea 100%);
+            border-left: 1px solid rgba(31,41,55,0.08);
+        }
+
+        .chat-header {
+            padding: 20px;
+            border-bottom: 1px solid rgba(31,41,55,0.08);
+            text-align: center;
+        }
+
+        .chat-header h2 {
+            font-size: 1.4rem;
+            background: linear-gradient(45deg, #b45309, #0f766e);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .chat-header .sub {
+            font-size: 0.75rem;
+            color: rgba(31,41,55,0.6);
+            margin-top: 4px;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .chat-messages::-webkit-scrollbar { width: 4px; }
+        .chat-messages::-webkit-scrollbar-thumb { background: rgba(31,41,55,0.25); border-radius: 4px; }
+
+        .msg {
+            padding: 10px 14px;
+            border-radius: 16px;
+            max-width: 90%;
+            word-wrap: break-word;
+            font-size: 0.9rem;
+            line-height: 1.4;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .msg.user {
+            background: rgba(15,118,110,0.15);
+            color: #0f172a;
+            align-self: flex-end;
+            border-bottom-right-radius: 4px;
+            border: 1px solid rgba(15,118,110,0.25);
+        }
+
+        .msg.ai {
+            background: rgba(180,83,9,0.10);
+            border: 1px solid rgba(180,83,9,0.20);
+            align-self: flex-start;
+            border-bottom-left-radius: 4px;
+        }
+
+        .chat-input-area {
+            padding: 15px;
+            border-top: 1px solid rgba(31,41,55,0.08);
+            display: flex;
+            gap: 8px;
+        }
+
+        #userInput {
+            flex: 1;
+            padding: 12px 18px;
+            border: none;
+            border-radius: 25px;
+            background: rgba(31,41,55,0.06);
+            color: #111827;
+            font-size: 0.95rem;
+            outline: none;
+            transition: background 0.3s;
+        }
+
+        #userInput:focus {
+            background: rgba(31,41,55,0.09);
+        }
+
+        #userInput::placeholder { color: rgba(31,41,55,0.45); }
+
+        #sendBtn {
+            padding: 12px 22px;
+            border: none;
+            border-radius: 25px;
+            background: linear-gradient(45deg, #b45309, #0f766e);
+            color: #fffaf0;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.15s, opacity 0.2s;
+        }
+
+        #sendBtn:hover { transform: scale(1.05); }
+        #sendBtn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+        .timings-bar {
+            padding: 8px 15px;
+            font-size: 0.7rem;
+            color: rgba(31,41,55,0.55);
+            font-family: 'SF Mono', monospace;
+            text-align: center;
+            border-top: 1px solid rgba(31,41,55,0.06);
+        }
+    </style>
+</head>
+<body>
+    <!-- LEFT: 70% Video -->
+    <div class="video-panel">
+        <video id="idleVideo" class="video-layer is-visible" playsinline autoplay muted loop></video>
+        <video id="mikoVideo" class="video-layer" playsinline></video>
+        <div id="idleOverlay" class="idle-overlay" style="display:none"></div>
+        <div class="latency-badge">
+            ⚡ <span id="latencyValue" class="val">--</span>ms
+        </div>
+        <div id="statusBadge" class="status-badge">Connecting...</div>
+    </div>
+
+    <!-- RIGHT: 30% Chat -->
+    <div class="chat-panel">
+        <div class="chat-header">
+            <h2>🤖 Miko</h2>
+            <div class="sub">Real-Time AI • Groq + Edge-TTS</div>
+        </div>
+        <div class="chat-messages" id="chatMessages"></div>
+        <div class="timings-bar" id="timings"></div>
+        <div class="chat-input-area">
+            <input type="text" id="userInput" placeholder="Say something..." autocomplete="off">
+            <button id="sendBtn">Send</button>
+        </div>
+    </div>
+
+    <script>
+        const ws = new WebSocket(`ws://${window.location.host}/ws`);
+        const video = document.getElementById('mikoVideo');
+        const idleOverlay = document.getElementById('idleOverlay');
+        const idleVideo = document.getElementById('idleVideo');
+        const userInput = document.getElementById('userInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const chatMessages = document.getElementById('chatMessages');
+        const statusBadge = document.getElementById('statusBadge');
+        const latencyValue = document.getElementById('latencyValue');
+        const timings = document.getElementById('timings');
+
+        let isProcessing = false;
+
+        // Default: always show character's idle/standby video immediately.
+        // This prevents any "Waiting for you..." placeholder.
+        idleVideo.src = '/character/stanby.mp4';
+
+        ws.onopen = () => {
+            statusBadge.textContent = '● Connected';
+            statusBadge.className = 'status-badge connected';
+        };
+
+        ws.onclose = () => {
+            statusBadge.textContent = '● Disconnected';
+            statusBadge.className = 'status-badge';
+        };
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+
+            if (data.type === 'response') {
+                addMsg(data.text, 'ai');
+                latencyValue.textContent = data.timings.total_ms;
+                timings.textContent = `LLM: ${data.timings.llm_ms}ms | TTS: ${data.timings.tts_ms}ms | Video: ${data.timings.video_ms}ms`;
+
+                // Play video ONCE (no loop)
+                video.src = data.video_url;
+                idleOverlay.style.display = 'none';
+                video.loop = false;
+
+                // Smooth transition: fade in response video over idle video
+                video.classList.add('is-visible');
+                video.currentTime = 0;
+                video.play();
+
+                video.onended = () => {
+                    isProcessing = false;
+                    sendBtn.disabled = false;
+                    statusBadge.textContent = '● Connected';
+                    statusBadge.className = 'status-badge connected';
+                    // Smooth return to idle
+                    video.classList.remove('is-visible');
+                    idleVideo.classList.add('is-visible');
+                };
+            }
+        };
+
+        function addMsg(text, sender) {
+            const el = document.createElement('div');
+            el.className = `msg ${sender}`;
+            el.textContent = text;
+            chatMessages.appendChild(el);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function sendMessage() {
+            const text = userInput.value.trim();
+            if (!text || isProcessing) return;
+
+            isProcessing = true;
+            sendBtn.disabled = true;
+            statusBadge.textContent = '● Processing...';
+            statusBadge.className = 'status-badge processing';
+
+            addMsg(text, 'user');
+            ws.send(JSON.stringify({ text }));
+            userInput.value = '';
+        }
+
+        sendBtn.addEventListener('click', sendMessage);
+        userInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+        userInput.focus();
+    </script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "name": "miko-nextjs",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n web,api -c \"cyan,magenta\" \"next dev\" \"python3 -m uvicorn backend.main:app --reload --port 8002\"",
+    "dev:web": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "ffmpeg-static": "5.2.0",
+    "groq-sdk": "0.7.0",
+    "next": "14.2.5",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "concurrently": "8.2.2"
+  }
+}

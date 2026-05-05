@@ -1,0 +1,41 @@
+# Node
+node_modules/
+.next/
+out/
+build/
+npm-debug.log
+yarn-error.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env/
+env/
+ENV/
+
+# OS
+.DS_Store
+
+# Environments
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env
+
+# Media and Output
+*.mp4
+*.wav
+*.mp3
+output/
+generated/
+LivePortrait/pretrained_weights/
+Wav2Lip/checkpoints/
+SadTalker/checkpoints/
+frames_cache/
+
+# Test scripts
+split_test*.py
+patch_css*.py
